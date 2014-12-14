@@ -43,12 +43,12 @@ BSD license, all text above must be included in any redistribution.
 // For similar reasons, the clock pin is only semi-configurable...it can
 // be specified as any pin within a specific PORT register stated below.
 
-#define FASTER
+#define FAST_RGB_IO
 
 #if defined(SPARK)
   #define pgm_read_byte(addr) (*(const uint8_t *)(addr))
 
-#if defined(FASTER)
+#if defined(FAST_RGB_IO)
   #define R1	A6		// bit 2 = RED 1
   #define G1	D4		// bit 3 = GREEN 1
   #define B1	D3		// bit 4 = BLUE 1
@@ -655,7 +655,7 @@ void RGBmatrixPanel::updateDisplay(void) {
 
 #if defined(SPARK)
 
-#if defined (FASTER)
+#if defined (FAST_RGB_IO)
 	for (uint8_t i=0; i < 32; i++) {
 		pins = (ptr[i] & 0xF8) | ((ptr[i] & 0x04) >> 2);		//Shift R1 to bit 0
 		GPIOB->BSRR = pins;
@@ -712,7 +712,7 @@ void RGBmatrixPanel::updateDisplay(void) {
   for(i=0; i<32; i++) {
 		uint8_t bits = ( ptr[i] << 6) | ((ptr[i+32] << 4) & 0x30) | ((ptr[i+64] << 2) & 0x0C);
 		
-#if defined (FASTER)
+#if defined (FAST_RGB_IO)
 		pins = (bits & 0xF8) | ((bits & 0x04) >> 2);		//Shift R1 to bit 0
 		GPIOB->BSRR = pins;
 		GPIOB->BRR = ~pins & 0xF9;
