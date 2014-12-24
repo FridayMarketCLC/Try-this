@@ -37,53 +37,22 @@ BSD license, all text above must be included in any redistribution.
 #include "gamma.h"
 #include "SparkIntervalTimer.h"
 
-// A full PORT register is required for the data lines, though only the
-// top 6 output bits are used.  For performance reasons, the port # cannot
-// be changed via library calls, only by changing constants in the library.
-// For similar reasons, the clock pin is only semi-configurable...it can
-// be specified as any pin within a specific PORT register stated below.
-
-#define FAST_RGB_IO
 
 #if defined(SPARK)
-  #define pgm_read_byte(addr) (*(const uint8_t *)(addr))
-
-#if defined(FAST_RGB_IO)
-  #define R1	A6		// bit 2 = RED 1
-  #define G1	D4		// bit 3 = GREEN 1
-  #define B1	D3		// bit 4 = BLUE 1
-  #define R2	D2		// bit 5 = RED 2
-  #define G2	D1		// bit 6 = GREEN 2
-  #define B2	D0		// bit 7 = BLUE 2
-#else  
-  #define R1	D0		// bit 2 = RED 1
-  #define G1	D1		// bit 3 = GREEN 1
-  #define B1	D2		// bit 4 = BLUE 1
-  #define R2	D3		// bit 5 = RED 2
-  #define G2	D4		// bit 6 = GREEN 2
-  #define B2	D5		// bit 7 = BLUE 2
-#endif
-  
-  #define signalPIN	A7	// Use pin A7 for oscilloscope or analyzer timing
-  #define pinLO(x)	PIN_MAP[x].gpio_peripheral->BRR = PIN_MAP[x].gpio_pin
-  #define pinHI(x)	PIN_MAP[x].gpio_peripheral->BSRR = PIN_MAP[x].gpio_pin
-
-#define numPanels	1
-  
   static const uint8_t rgb_lookup[] = {
-	0x00, 0x80, 0x40, 0xC0, 0x20, 0xA0, 0x60, 0xE0,
-	0x10, 0x90, 0x50, 0xD0, 0x30, 0xB0, 0x70, 0xF0,
-	0x08, 0x88, 0x48, 0xC8, 0x28, 0xA8, 0x68, 0xE8,
-	0x18, 0x98, 0x58, 0xD8, 0x38, 0xB8, 0x78, 0xF8 };
+  0x00, 0x80, 0x40, 0xC0, 0x20, 0xA0, 0x60, 0xE0,
+  0x10, 0x90, 0x50, 0xD0, 0x30, 0xB0, 0x70, 0xF0,
+  0x08, 0x88, 0x48, 0xC8, 0x28, 0xA8, 0x68, 0xE8,
+  0x18, 0x98, 0x58, 0xD8, 0x38, 0xB8, 0x78, 0xF8 };
 
-#if defined(FASTER)
-  static const uint16_t	dur[4] = {30, 60, 120, 240};
-#else
-  static const uint16_t	dur[4] = {50, 100, 200, 400};
-#endif
-
-#else
-#if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__)
+  #if defined(FASTEST)
+    static const uint16_t	dur[4] = {20, 40, 80, 160};
+  #elif defined(FASTER)
+    static const uint16_t	dur[4] = {30, 60, 120, 240};
+  #else
+    static const uint16_t	dur[4] = {50, 100, 200, 400};
+  #endif
+#elif defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__)
  // Arduino Mega is now tested and confirmed, with the following caveats:
  // Because digital pins 2-7 don't map to a contiguous port register,
  // the Mega requires connecting the matrix data lines to different pins.
@@ -113,7 +82,6 @@ BSD license, all text above must be included in any redistribution.
  #define DATADIR  DDRD
  #define SCLKPORT PORTB
 #endif
-#endif
 
 #define nPlanes 4
 
@@ -140,12 +108,12 @@ void RGBmatrixPanel::init(uint8_t rows, uint8_t a, uint8_t b, uint8_t c,
   nRows = rows; // Number of multiplexed rows; actual height is 2X this
 
   // Allocate and initialize matrix buffer:
-  int buffsize  = numPanels * 32 * nRows * 3, // x3 = 3 bytes holds 4 planes "packed"
-      allocsize = (dbuf == true) ? (buffsize * 2) : buffsize;
+  int buffsize  = numPanels * 32 * nRows * 3; // x3 = 3 bytes holds 4 planes "packed"
+  int allocsize = dbuf ? (buffsize * 2) : buffsize;
   if(NULL == (matrixbuff[0] = (uint8_t *)malloc(allocsize))) return;
   memset(matrixbuff[0], 0, allocsize);
   // If not double-buffered, both buffers then point to the same address:
-  matrixbuff[1] = (dbuf == true) ? &matrixbuff[0][buffsize] : matrixbuff[0];
+  matrixbuff[1] = dbuf ? &matrixbuff[0][buffsize] : matrixbuff[0];
 
   // Save pin numbers for use by begin() method later.
   _a     = a;
@@ -156,8 +124,10 @@ void RGBmatrixPanel::init(uint8_t rows, uint8_t a, uint8_t b, uint8_t c,
   _oe    = oe;
 
 #if defined(SPARK)
+  #if defined(signalPIN)
   pinMode(signalPIN, OUTPUT);
   pinLO(signalPIN);
+  #endif
 #else
   // Look up port registers and pin masks ahead of time,
   // avoids many slow digitalWrite() calls later.
@@ -171,7 +141,7 @@ void RGBmatrixPanel::init(uint8_t rows, uint8_t a, uint8_t b, uint8_t c,
   addrbport = portOutputRegister(digitalPinToPort(b));
   addrbpin  = digitalPinToBitMask(b);
   addrcport = portOutputRegister(digitalPinToPort(c));
-  addrcpin  = digitalPinToBitMask(c); 
+  addrcpin  = digitalPinToBitMask(c);
 #endif
 
   plane     = nPlanes - 1;
@@ -194,12 +164,12 @@ RGBmatrixPanel::RGBmatrixPanel(
   uint8_t a, uint8_t b, uint8_t c, uint8_t d,
   uint8_t sclk, uint8_t latch, uint8_t oe, boolean dbuf) :
   Adafruit_GFX(numPanels * 32, 32) {
-  
+
   init(16, a, b, c, sclk, latch, oe, dbuf);
 
   // Init a few extra 32x32-specific elements:
   _d        = d;
-  
+
 #if !defined(SPARK)
   addrdport = portOutputRegister(digitalPinToPort(d));
   addrdpin  = digitalPinToBitMask(d);
@@ -211,25 +181,25 @@ void RGBmatrixPanel::begin(void) {
   backindex   = 0;                         // Back buffer
   buffptr     = matrixbuff[1 - backindex]; // -> front buffer
   activePanel = this;                      // For interrupt hander
-  
+
 #if defined(SPARK)
   // Enable all comm & address pins as outputs, set default states:
-  pinMode(_sclk , OUTPUT); PIN_MAP[_sclk].gpio_peripheral->BRR = PIN_MAP[_sclk].gpio_pin;	//Low
-  pinMode(_latch, OUTPUT); PIN_MAP[_latch].gpio_peripheral->BRR = PIN_MAP[_latch].gpio_pin;	//Low
-  pinMode(_oe   , OUTPUT); PIN_MAP[_oe].gpio_peripheral->BSRR = PIN_MAP[_oe].gpio_pin;		//High  (disable output)
-  pinMode(_a    , OUTPUT); PIN_MAP[_a].gpio_peripheral->BRR = PIN_MAP[_a].gpio_pin;			//Low
-  pinMode(_b    , OUTPUT); PIN_MAP[_b].gpio_peripheral->BRR = PIN_MAP[_b].gpio_pin;			//Low
-  pinMode(_c    , OUTPUT); PIN_MAP[_c].gpio_peripheral->BRR = PIN_MAP[_c].gpio_pin;			//Low
+  pinMode(_sclk , OUTPUT); pinLO(_sclk);	//Low
+  pinMode(_latch, OUTPUT); pinLO(_latch);	//Low
+  pinMode(_oe   , OUTPUT); pinHI(_oe);		//High  (disable output)
+  pinMode(_a    , OUTPUT); pinLO(_a);			//Low
+  pinMode(_b    , OUTPUT); pinLO(_b);			//Low
+  pinMode(_c    , OUTPUT); pinLO(_c);			//Low
   if(nRows > 8) {
-    pinMode(_d  , OUTPUT); PIN_MAP[_d].gpio_peripheral->BRR = PIN_MAP[_d].gpio_pin;			//Low
+    pinMode(_d  , OUTPUT); pinLO(_d);			//Low
   }
-  
-  pinMode(R1, OUTPUT); PIN_MAP[R1].gpio_peripheral->BRR = PIN_MAP[R1].gpio_pin;	//Low
-  pinMode(G1, OUTPUT); PIN_MAP[G1].gpio_peripheral->BRR = PIN_MAP[G1].gpio_pin;	//Low
-  pinMode(B1, OUTPUT); PIN_MAP[B1].gpio_peripheral->BRR = PIN_MAP[B1].gpio_pin;	//Low
-  pinMode(R2, OUTPUT); PIN_MAP[R2].gpio_peripheral->BRR = PIN_MAP[R2].gpio_pin;	//Low
-  pinMode(G2, OUTPUT); PIN_MAP[G2].gpio_peripheral->BRR = PIN_MAP[G2].gpio_pin;	//Low
-  pinMode(B2, OUTPUT); PIN_MAP[B2].gpio_peripheral->BRR = PIN_MAP[B2].gpio_pin;	//Low
+
+  pinMode(R1, OUTPUT); pinLO(R1);	//Low
+  pinMode(G1, OUTPUT); pinLO(G1);	//Low
+  pinMode(B1, OUTPUT); pinLO(B1);	//Low
+  pinMode(R2, OUTPUT); pinLO(R2);	//Low
+  pinMode(G2, OUTPUT); pinLO(G2);	//Low
+  pinMode(B2, OUTPUT); pinLO(B2);	//Low
 #else
   // Enable all comm & address pins as outputs, set default states:
   pinMode(_sclk , OUTPUT); SCLKPORT   &= ~sclkpin;  // Low
@@ -384,11 +354,11 @@ void RGBmatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t c) {
     ptr = &matrixbuff[backindex][y * WIDTH * (nPlanes - 1) + x]; // Base addr
     // Plane 0 is a tricky case -- its data is spread about,
     // stored in least two bits not used by the other planes.
-    ptr[64] &= ~0B00000011;            // Plane 0 R,G mask out in one op
-    if(r & 1) ptr[64] |=  0B00000001;  // Plane 0 R: 64 bytes ahead, bit 0
-    if(g & 1) ptr[64] |=  0B00000010;  // Plane 0 G: 64 bytes ahead, bit 1
-    if(b & 1) ptr[32] |=  0B00000001;  // Plane 0 B: 32 bytes ahead, bit 0
-    else      ptr[32] &= ~0B00000001;  // Plane 0 B unset; mask out
+    ptr[64 * numPanels] &= ~0B00000011;            // Plane 0 R,G mask out in one op
+    if(r & 1) ptr[64 * numPanels] |=  0B00000001;  // Plane 0 R: 64 bytes ahead, bit 0
+    if(g & 1) ptr[64 * numPanels] |=  0B00000010;  // Plane 0 G: 64 bytes ahead, bit 1
+    if(b & 1) ptr[32 * numPanels] |=  0B00000001;  // Plane 0 B: 32 bytes ahead, bit 0
+    else      ptr[32 * numPanels] &= ~0B00000001;  // Plane 0 B unset; mask out
     // The remaining three image planes are more normal-ish.
     // Data is stored in the high 6 bits so it can be quickly
     // copied to the DATAPORT register w/6 output lines.
@@ -404,8 +374,8 @@ void RGBmatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t c) {
     // bits, except for the plane 0 stuff, using 2 least bits.
     ptr = &matrixbuff[backindex][(y - nRows) * WIDTH * (nPlanes - 1) + x];
     *ptr &= ~0B00000011;               // Plane 0 G,B mask out in one op
-    if(r & 1)  ptr[32] |=  0B00000010; // Plane 0 R: 32 bytes ahead, bit 1
-    else       ptr[32] &= ~0B00000010; // Plane 0 R unset; mask out
+    if(r & 1)  ptr[32 * numPanels] |=  0B00000010; // Plane 0 R: 32 bytes ahead, bit 1
+    else       ptr[32 * numPanels] &= ~0B00000010; // Plane 0 R unset; mask out
     if(g & 1) *ptr     |=  0B00000001; // Plane 0 G: bit 0
     if(b & 1) *ptr     |=  0B00000010; // Plane 0 B: bit 0
     for(; bit < limit; bit <<= 1) {
@@ -419,14 +389,17 @@ void RGBmatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t c) {
 }
 
 void RGBmatrixPanel::fillScreen(uint16_t c) {
-  if((c == 0x0000) || (c == 0xffff)) {
+  if((c & 0x3F) == ((c >>  5) & 0x3F) &&
+     (c & 0x3F) == ((c >> 11) & 0x3F))
+  {
     // For black or white, all bits in frame buffer will be identically
     // set or unset (regardless of weird bit packing), so it's OK to just
     // quickly memset the whole thing:
-    memset(matrixbuff[backindex], c, 32 * nRows * 3);
+    memset(matrixbuff[backindex], c, 32 * nRows * 3 * numPanels);
   } else {
     // Otherwise, need to handle it the long way:
-    Adafruit_GFX::fillScreen(c);
+  //  Adafruit_GFX::fillScreen(c);
+    memset(matrixbuff[backindex], c, 32 * nRows * 3 * numPanels);
   }
 }
 
@@ -448,7 +421,7 @@ void RGBmatrixPanel::swapBuffers(boolean copy) {
     swapflag = true;                  // Set flag here, then...
     while(swapflag == true) delay(1); // wait for interrupt to clear it
     if(copy == true)
-      memcpy(matrixbuff[backindex], matrixbuff[1-backindex], 32 * nRows * 3);
+      memcpy(matrixbuff[backindex], matrixbuff[1-backindex], 32 * nRows * 3 * numPanels);
   }
 }
 
@@ -459,7 +432,7 @@ void RGBmatrixPanel::swapBuffers(boolean copy) {
 // back into the display using a pgm_read_byte() loop.
 void RGBmatrixPanel::dumpMatrix(void) {
 
-  int i, buffsize = 32 * nRows * 3;
+  int i, buffsize = 32 * nRows * 3 * numPanels;
 
   Serial.print("\n\n"
     "#include <avr/pgmspace.h>\n\n"
@@ -481,9 +454,15 @@ void RGBmatrixPanel::dumpMatrix(void) {
 #if defined(SPARK)
 void refreshISR(void)
 {
+  #if defined(signalPIN)
   pinHI(signalPIN);	//Start timing
+  #endif
+
   activePanel->updateDisplay();   // Call refresh func for active display
+
+  #if defined(signalPIN)
   pinLO(signalPIN);	//Start timing
+  #endif
 }
 #else
 ISR(TIMER1_OVF_vect, ISR_BLOCK) { // ISR_BLOCK important -- see notes later
@@ -537,26 +516,27 @@ ISR(TIMER1_OVF_vect, ISR_BLOCK) { // ISR_BLOCK important -- see notes later
 // counter variables change between past/present/future tense in mid-
 // function...hopefully tenses are sufficiently commented.
 
-void RGBmatrixPanel::updateDisplay(void) {
+inline void RGBmatrixPanel::updateDisplay(void) {
   uint8_t  i, *ptr;
   uint16_t duration, pins;
 
-  #if !defined(SPARK)
+#if defined(SPARK)
+  #if defined(FASTEST)
+  portSetMasked(CTRLPORT, CTRLMASK, CTRLMASK);  // OE/LAT HIGH
+  #else
+  pinHI(_oe);		// Disable LED output during row/plane switchover
+  pinHI(_latch);	// Latch data loaded during *prior* interrupt
+  #endif
+  //TEST - start with clock low
+  pinLO(_sclk);	//lo
+
+  duration = dur[plane];
+#else
   uint8_t  tick, tock;
   uint16_t t;
-#endif
 
-#if defined(SPARK)
-  PIN_MAP[_oe].gpio_peripheral->BSRR = PIN_MAP[_oe].gpio_pin;		// Disable LED output during row/plane switchover
-  PIN_MAP[_latch].gpio_peripheral->BSRR = PIN_MAP[_latch].gpio_pin;	// Latch data loaded during *prior* interrupt
-  
-  //TEST - start with clock low
-  PIN_MAP[_sclk].gpio_peripheral->BRR = PIN_MAP[_sclk].gpio_pin;	//lo
-
-#else
   *oeport  |= oepin;  // Disable LED output during row/plane switchover
   *latport |= latpin; // Latch data loaded during *prior* interrupt
-#endif
 
   // Calculate time to next interrupt BEFORE incrementing plane #.
   // This is because duration is the display time for the data loaded
@@ -564,11 +544,6 @@ void RGBmatrixPanel::updateDisplay(void) {
   // result because that time is implicit between the timer overflow
   // (interrupt triggered) and the initial LEDs-off line at the start
   // of this method.
-#if defined(SPARK)
-  //t = (nRows > 8) ? LOOPTIME : (LOOPTIME * 2);
-  //duration = ((t + CALLOVERHEAD * 2) << plane) - CALLOVERHEAD;
-  duration = dur[plane];
-#else
   t = (nRows > 8) ? LOOPTIME : (LOOPTIME * 2);
   duration = ((t + CALLOVERHEAD * 2) << plane) - CALLOVERHEAD;
 #endif
@@ -596,12 +571,15 @@ void RGBmatrixPanel::updateDisplay(void) {
     // latch now, so update the row address lines before we do that:
 
 #if defined(SPARK)
-    (row & 0x1) ? PIN_MAP[_a].gpio_peripheral->BSRR = PIN_MAP[_a].gpio_pin : PIN_MAP[_a].gpio_peripheral->BRR = PIN_MAP[_a].gpio_pin;
-    (row & 0x2) ? PIN_MAP[_b].gpio_peripheral->BSRR = PIN_MAP[_b].gpio_pin : PIN_MAP[_b].gpio_peripheral->BRR = PIN_MAP[_b].gpio_pin;
-    (row & 0x4) ? PIN_MAP[_c].gpio_peripheral->BSRR = PIN_MAP[_c].gpio_pin : PIN_MAP[_c].gpio_peripheral->BRR = PIN_MAP[_c].gpio_pin;
-    if(nRows > 8) {
-      (row & 0x8) ? PIN_MAP[_d].gpio_peripheral->BSRR = PIN_MAP[_d].gpio_pin : PIN_MAP[_d].gpio_peripheral->BRR = PIN_MAP[_d].gpio_pin;
-    }
+  #if defined(FASTEST)
+    portSetMasked(ABCDPORT, (row << ABCSHIFT) | (row >> 3), ABCDMASK);
+  #else
+    pinSet(_a, row & 0x01);
+    pinSet(_b, row & 0x02);
+    pinSet(_c, row & 0x04);
+    if(nRows > 8)
+      pinSet(_d, row & 0x08);
+  #endif
 #else
     (row & 0x1) ? *addraport |=  addrapin : *addraport &= ~addrapin;
     (row & 0x2) ? *addrbport |=  addrbpin : *addrbport &= ~addrbpin;
@@ -612,16 +590,16 @@ void RGBmatrixPanel::updateDisplay(void) {
 #endif
   }
 
-  // buffptr, being 'volatile' type, doesn't take well to optimization.
-  // A local register copy can speed some things up:
-  ptr = (uint8_t *)buffptr;
-
 #if defined(SPARK)
   // RESET timer duration
   refreshTimer.resetPeriod_SIT(duration, uSec);
 
-  PIN_MAP[_oe].gpio_peripheral->BRR = PIN_MAP[_oe].gpio_pin;		// Re-enable output
-  PIN_MAP[_latch].gpio_peripheral->BRR = PIN_MAP[_latch].gpio_pin;	// Latch down
+  #if defined(FASTEST)
+  portSetMasked(CTRLPORT, LOW, CTRLMASK);  // OE/LAT LOW
+  #else
+  pinLO(_oe);	  	// Re-enable output
+  pinLO(_latch);	// Latch down
+  #endif
 #else
   ICR1      = duration; // Set interval for next interrupt
   TCNT1     = 0;        // Restart interrupt timer
@@ -643,7 +621,12 @@ void RGBmatrixPanel::updateDisplay(void) {
   tick = tock | sclkpin;
 #endif
 
-  if(plane > 0) { // 188 ticks from TCNT1=0 (above) to end of function
+  // buffptr, being 'volatile' type, doesn't take well to optimization.
+  // A local register copy can speed some things up:
+  ptr = (uint8_t *)buffptr;
+
+  if(plane > 0)
+  { // 188 ticks from TCNT1=0 (above) to end of function
 
     // Planes 1-3 copy bytes directly from RAM to PORT without unpacking.
     // The least 2 bits (used for plane 0 data) are presumed masked out
@@ -655,26 +638,25 @@ void RGBmatrixPanel::updateDisplay(void) {
 
 #if defined(SPARK)
 
-#if defined (FAST_RGB_IO)
-	for (uint8_t i=0; i < 32; i++) {
-		pins = (ptr[i] & 0xF8) | ((ptr[i] & 0x04) >> 2);		//Shift R1 to bit 0
-		GPIOB->BSRR = pins;
-		GPIOB->BRR = ~pins & 0xF9;
-
-		PIN_MAP[_sclk].gpio_peripheral->BSRR = PIN_MAP[_sclk].gpio_pin;	//hi
-		PIN_MAP[_sclk].gpio_peripheral->BRR = PIN_MAP[_sclk].gpio_pin;	//lo
-#else	
-	for (uint8_t i=0; i < 32; i++) {
-		(ptr[i] & 0x04) ? PIN_MAP[R1].gpio_peripheral->BSRR = PIN_MAP[R1].gpio_pin : PIN_MAP[R1].gpio_peripheral->BRR = PIN_MAP[R1].gpio_pin; //R1
-		(ptr[i] & 0x08) ? PIN_MAP[G1].gpio_peripheral->BSRR = PIN_MAP[G1].gpio_pin : PIN_MAP[G1].gpio_peripheral->BRR = PIN_MAP[G1].gpio_pin; //G1
-		(ptr[i] & 0x10) ? PIN_MAP[B1].gpio_peripheral->BSRR = PIN_MAP[B1].gpio_pin : PIN_MAP[B1].gpio_peripheral->BRR = PIN_MAP[B1].gpio_pin; //B1
-		(ptr[i] & 0x20) ? PIN_MAP[R2].gpio_peripheral->BSRR = PIN_MAP[R2].gpio_pin : PIN_MAP[R2].gpio_peripheral->BRR = PIN_MAP[R2].gpio_pin; //R2
-		(ptr[i] & 0x40) ? PIN_MAP[G2].gpio_peripheral->BSRR = PIN_MAP[G2].gpio_pin : PIN_MAP[G2].gpio_peripheral->BRR = PIN_MAP[G2].gpio_pin; //G2
-		(ptr[i] & 0x80) ? PIN_MAP[B2].gpio_peripheral->BSRR = PIN_MAP[B2].gpio_pin : PIN_MAP[B2].gpio_peripheral->BRR = PIN_MAP[B2].gpio_pin; //B2
-		PIN_MAP[_sclk].gpio_peripheral->BSRR = PIN_MAP[_sclk].gpio_pin;	//hi
-		PIN_MAP[_sclk].gpio_peripheral->BRR = PIN_MAP[_sclk].gpio_pin;	//lo
-#endif
-	}
+    for (uint8_t i=0; i < 32 * numPanels; i++)
+    {
+    #if defined(FASTEST)
+      portSetMasked(RGBPORT, ptr[i], RGBMASK);
+    #elif defined(FASTER)
+  		pins = (ptr[i] & 0xF8) | ((ptr[i] & 0x04) >> 2);		//Shift R1 to bit 0
+  		GPIOB->BSRR = pins;
+  		GPIOB->BRR = ~pins & 0xF9;
+    #else
+  		pinSet(R1, (ptr[i] & 0x04)); //R1
+  		pinSet(G1, (ptr[i] & 0x08)); //G1
+  		pinSet(B1, (ptr[i] & 0x10)); //B1
+  		pinSet(R2, (ptr[i] & 0x20)); //R2
+  		pinSet(G2, (ptr[i] & 0x40)); //G2
+  		pinSet(B2, (ptr[i] & 0x80)); //B2
+    #endif
+      pinHI(_sclk);	//hi
+      pinLO(_sclk);	//lo
+	   }
 #else
     #define pew asm volatile(                 \
       "ld  __tmp_reg__, %a[ptr]+"    "\n\t"   \
@@ -694,9 +676,10 @@ void RGBmatrixPanel::updateDisplay(void) {
     pew pew pew pew pew pew pew pew
 #endif
 
-    buffptr += 32;
-
-  } else { // 920 ticks from TCNT1=0 (above) to end of function
+    buffptr += 32 * numPanels;
+  }
+  else
+  { // 920 ticks from TCNT1=0 (above) to end of function
 
     // Planes 1-3 (handled above) formatted their data "in place,"
     // their layout matching that out the output PORT register (where
@@ -709,38 +692,36 @@ void RGBmatrixPanel::updateDisplay(void) {
     // has the longest display interval, so the extra work fits.
 
 #if defined(SPARK)
-  for(i=0; i<32; i++) {
-		uint8_t bits = ( ptr[i] << 6) | ((ptr[i+32] << 4) & 0x30) | ((ptr[i+64] << 2) & 0x0C);
-		
-#if defined (FAST_RGB_IO)
-		pins = (bits & 0xF8) | ((bits & 0x04) >> 2);		//Shift R1 to bit 0
-		GPIOB->BSRR = pins;
-		GPIOB->BRR = ~pins & 0xF9;
+    for(i=0; i<32 * numPanels; i++)
+    {
+  		uint8_t bits = ( ptr[i] << 6) | ((ptr[i+32 * numPanels] << 4) & 0x30) | ((ptr[i+64 * numPanels] << 2) & 0x0C);
 
-		PIN_MAP[_sclk].gpio_peripheral->BSRR = PIN_MAP[_sclk].gpio_pin;	//hi
-		PIN_MAP[_sclk].gpio_peripheral->BRR = PIN_MAP[_sclk].gpio_pin;	//lo		
-#else
-		(bits & 0x04) ? PIN_MAP[R1].gpio_peripheral->BSRR = PIN_MAP[R1].gpio_pin : PIN_MAP[R1].gpio_peripheral->BRR = PIN_MAP[R1].gpio_pin; //R1
-		(bits & 0x08) ? PIN_MAP[G1].gpio_peripheral->BSRR = PIN_MAP[G1].gpio_pin : PIN_MAP[G1].gpio_peripheral->BRR = PIN_MAP[G1].gpio_pin; //G1
-		(bits & 0x10) ? PIN_MAP[B1].gpio_peripheral->BSRR = PIN_MAP[B1].gpio_pin : PIN_MAP[B1].gpio_peripheral->BRR = PIN_MAP[B1].gpio_pin; //B1
-		(bits & 0x20) ? PIN_MAP[R2].gpio_peripheral->BSRR = PIN_MAP[R2].gpio_pin : PIN_MAP[R2].gpio_peripheral->BRR = PIN_MAP[R2].gpio_pin; //R2
-		(bits & 0x40) ? PIN_MAP[G2].gpio_peripheral->BSRR = PIN_MAP[G2].gpio_pin : PIN_MAP[G2].gpio_peripheral->BRR = PIN_MAP[G2].gpio_pin; //G2
-		(bits & 0x80) ? PIN_MAP[B2].gpio_peripheral->BSRR = PIN_MAP[B2].gpio_pin : PIN_MAP[B2].gpio_peripheral->BRR = PIN_MAP[B2].gpio_pin; //B2		PIN_MAP[_sclk].gpio_peripheral->BSRR = PIN_MAP[_sclk].gpio_pin;	//hi
-		PIN_MAP[_sclk].gpio_peripheral->BSRR = PIN_MAP[_sclk].gpio_pin;	//hi
-		PIN_MAP[_sclk].gpio_peripheral->BRR = PIN_MAP[_sclk].gpio_pin;	//lo
-#endif
+    #if defined(FASTEST)
+      portSetMasked(RGBPORT, bits, RGBMASK);
+    #elif defined(FASTER)
+  		pins = (bits & 0xF8) | ((bits & 0x04) >> 2);		//Shift R1 to bit 0
+  		GPIOB->BSRR = pins;
+  		GPIOB->BRR = ~pins & 0xF9;
+    #else
+      pinSet(R1, (bits & 0x04)); //R1
+      pinSet(G1, (bits & 0x08)); //G1
+      pinSet(B1, (bits & 0x10)); //B1
+      pinSet(R2, (bits & 0x20)); //R2
+      pinSet(G2, (bits & 0x40)); //G2
+      pinSet(B2, (bits & 0x80)); //B2
+    #endif
+      pinHI(_sclk);	//hi
+      pinLO(_sclk);	//lo
     }
 #else
-    for(i=0; i<32; i++) {
+    for(i=0; i<32 * numPanels; i++) {
       DATAPORT =
         ( ptr[i]    << 6)         |
-        ((ptr[i+32] << 4) & 0x30) |
-        ((ptr[i+64] << 2) & 0x0C);
+        ((ptr[i+32 * numPanels] << 4) & 0x30) |
+        ((ptr[i+64 * numPanels] << 2) & 0x0C);
       SCLKPORT = tick; // Clock lo
       SCLKPORT = tock; // Clock hi
     }
 #endif
-		
   }
 }
-
