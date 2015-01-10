@@ -46,11 +46,14 @@ BSD license, all text above must be included in any redistribution.
   0x18, 0x98, 0x58, 0xD8, 0x38, 0xB8, 0x78, 0xF8 };
 
   #if defined(FASTEST)
-    static const uint16_t	dur[4] = {20, 40, 80, 160};
+    //static const uint16_t	dur[4] = {20, 40, 80, 160};
+    static const uint16_t	minDuration = 25;
   #elif defined(FASTER)
-    static const uint16_t	dur[4] = {30, 60, 120, 240};
+    //static const uint16_t	dur[4] = {30, 60, 120, 240};
+    static const uint16_t	minDuration = 30;
   #else
-    static const uint16_t	dur[4] = {50, 100, 200, 400};
+    //static const uint16_t	dur[4] = {50, 100, 200, 400};
+    static const uint16_t	minDuration = 50;
   #endif
 #elif defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__)
  // Arduino Mega is now tested and confirmed, with the following caveats:
@@ -530,7 +533,8 @@ inline void RGBmatrixPanel::updateDisplay(void) {
   //TEST - start with clock low
   pinLO(_sclk);	//lo
 
-  duration = dur[plane];
+  //duration = dur[plane];
+  duration = minDuration * numPanels * (1 >> plane);
 #else
   uint8_t  tick, tock;
   uint16_t t;
